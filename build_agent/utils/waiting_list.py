@@ -14,7 +14,7 @@
 
 
 from easylist import EasyList
-from parser.parse_requirements import parse_requirements
+from .parser.parse_requirements import parse_requirements
 import os
 
 class WaitingListItem:

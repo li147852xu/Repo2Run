@@ -14,6 +14,7 @@
 
 
 import docker
+import getpass
 import pexpect
 import time 
 import subprocess
@@ -22,7 +23,7 @@ import glob
 import re
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from parser.parse_command import match_download, match_runpipreqs, match_runtest, match_poetryruntest, match_conflict_solve, match_waitinglist_add, match_waitinglist_addfile, match_conflictlist_clear, match_waitinglist_clear, match_waitinglist_show, match_conflictlist_show, match_clear_configuration
+from .parser.parse_command import match_download, match_runpipreqs, match_runtest, match_poetryruntest, match_conflict_solve, match_waitinglist_add, match_waitinglist_addfile, match_conflictlist_clear, match_waitinglist_clear, match_waitinglist_show, match_conflictlist_show, match_clear_configuration
 from download import download
 from outputcollector import OutputCollector
 from show_msg import show_msg
@@ -224,6 +225,8 @@ RUN mkdir -p /repo && git config --global --add safe.directory /repo
             host_path = '/tmp/patch'
             container_path = '/tmp/patch'
             # 创建并启动一个新的容器，使用 tmp 镜像
+            # Do not set cpuset_cpus / mem_limit here: upstream used 0-19 CPUs which fails on
+            # laptops and Docker Desktop (e.g. "available: 0-9"). Match start_container().
             self.container = self.client.containers.run(
                 tmp_image_name,
                 detach=True,
@@ -231,10 +234,8 @@ RUN mkdir -p /repo && git config --global --add safe.directory /repo
                 stdin_open=True,
                 volumes={host_path: {'bind': container_path, 'mode': 'rw'}},
                 privileged=True,
-                mem_limit='30g',
                 network_mode='bridge',
-                cpuset_cpus='0-19',
-                )
+            )
 
             # 启动新的 shell 会话
             self.start_shell()
@@ -456,7 +457,12 @@ RUN mkdir -p /repo && git config --global --add safe.directory /repo
                             msg = f'\nRunning `{command}`...\n'
                             msg += f'The file {file_path} does not exist. Please ensure you have entered the correct absolute path, not a relative path! If you are unsure, you can use commands like `ls` to verify.'
                             return msg, 1
-                        subprocess.run(f'sudo chown huruida:huruida {project_directory}/repo/{self.sandbox.full_name}/repo/{file_path.split("/")[-1]}', shell=True, capture_output=True)
+                        target_file = f'{project_directory}/utils/repo/{self.sandbox.full_name}/repo/{file_path.split("/")[-1]}'
+                        try:
+                            current_user = getpass.getuser()
+                            subprocess.run(f'sudo chown {current_user}:{current_user} {target_file}', shell=True, capture_output=True)
+                        except Exception:
+                            pass
                         with OutputCollector() as collector:
                             waiting_list.addfile(f'{project_directory}/utils/repo/{self.sandbox.full_name}/repo/{file_path.split("/")[-1]}', conflict_list)
                         result_message = f'Running `{command}`...\n' + collector.get_output() + '\n'
@@ -587,7 +593,7 @@ Explanation: Clear all the items in the waiting list.'''
                 
                 except pexpect.TIMEOUT:
                     if match_runtest(command) or match_poetryruntest(command):
-                        os.sytem(f'touch {self.sandbox.root_path}/output/{self.sandbox.full_name}/TIMEOUT')
+                        os.system(f'touch {self.sandbox.root_path}/output/{self.sandbox.full_name}/TIMEOUT')
                         sys.exit(123)
                     partial_output = self.sandbox.shell.before.decode('utf-8').strip()
                     partial_output_lines = partial_output.split('\n')
@@ -598,7 +604,7 @@ Explanation: Clear all the items in the waiting list.'''
 
             def edit(self, edit_tmp_file:str, project_path:str, file_path = None, start_line = 0, end_line = 0, timeout=600):
                 if file_path:
-                    if file_path.split('/')[-1].startswith('test_') or file_path('/')[-1].endswith('_test.py'):
+                    if file_path.split('/')[-1].startswith('test_') or file_path.split('/')[-1].endswith('_test.py'):
                         msg = f'Running Edit...\n' + f'You are trying to modify file {file_path}, but we require that you should not modify the testing files. Please consider alternative solutions.' + '\n'
                         return msg, 1
                 if not file_path:

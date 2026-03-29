@@ -276,8 +276,9 @@ def integrate_dockerfile(root_path):
     workdir_st = f'WORKDIR /'
     # 将patch文件夹移到根目录下，为/patch
 
-    copy_st = f'COPY search_patch /search_patch'
-    copy_edit_st = f'COPY code_edit.py /code_edit.py'
+    # Build context = root_path (output/<author>/<repo>/); patch dir must match git apply paths (/patch/...)
+    copy_st = 'COPY patch /patch'
+    copy_edit_st = 'COPY code_edit.py /code_edit.py'
     pre_download = 'RUN apt-get update && apt-get install -y curl\nRUN curl -sSL https://install.python-poetry.org | python -\nENV PATH="/root/.local/bin:$PATH"\nRUN pip install pytest pytest-xdist\nRUN pip install pipdeptree'
 
     git_st = f'RUN git clone https://github.com/{author_name}/{repo_name}.git'
@@ -293,8 +294,12 @@ def integrate_dockerfile(root_path):
         subprocess.run('touch ERROR', cwd=root_path, shell=True)
     with open(f'{root_path}/inner_commands.json', 'r') as r1:
         commands_data = json.load(r1)
-    with open(f'{root_path}/pipdeptree.json', 'r') as r2:
-        pipdeptree_data = json.load(r2)
+    pipdeptree_path = f'{root_path}/pipdeptree.json'
+    if os.path.exists(pipdeptree_path):
+        with open(pipdeptree_path, 'r') as r2:
+            pipdeptree_data = json.load(r2)
+    else:
+        pipdeptree_data = []
     diff_no = 1
     for command in commands_data:
         res = generate_statement(command, pipdeptree_data)
@@ -319,8 +324,7 @@ def integrate_dockerfile(root_path):
     dockerfile.append(workdir_st)
     if os.path.exists(f'{root_path}/patch'):
         dockerfile.append(copy_st)
-
-    if len(outer_command) > 0:
+    if os.path.exists(f'{root_path}/code_edit.py'):
         dockerfile.append(copy_edit_st)
     dockerfile.extend(pre_download.splitlines())
     
@@ -328,6 +332,7 @@ def integrate_dockerfile(root_path):
     dockerfile.append(mkdir_st)
     dockerfile.append(git_save_st)
     dockerfile.append(mv_st)
+    dockerfile.append(checkout_st)
     dockerfile.append(rm_st)
     dockerfile.extend(container_run_set)
     with open(f'{root_path}/Dockerfile', 'w') as w1:

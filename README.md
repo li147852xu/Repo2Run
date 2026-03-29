@@ -40,25 +40,51 @@ cd repo2run
 pip install -r requirements.txt
 ```
 
+**Note:** The sample Dockerfile directory is named `build_agent/docker_templates/` (not `docker/`). A folder named `docker` next to `main.py` can shadow the PyPI package `docker` and cause `AttributeError: module 'docker' has no attribute 'from_env'`.
+
+3. Configure LLM credentials (see **[docs/LLM_CONFIGURATION.md](docs/LLM_CONFIGURATION.md)** for all supported providers).
+
+   **OpenAI or OpenAI-compatible** (e.g. DeepSeek — set base URL):
+   ```bash
+   export OPENAI_API_KEY="your-key"
+   export OPENAI_BASE_URL="https://api.deepseek.com"   # only if not using api.openai.com
+   ```
+
+   **Anthropic (Claude):**
+   ```bash
+   export ANTHROPIC_API_KEY="your-key"
+   ```
+
+   Template without secrets: copy [.env.example](.env.example) to `.env` locally (do not commit `.env`).
+
 ## 🔧 Usage
 
 The main entry point is through the build agent's main script. You can run it with the following arguments:
 
 ```bash
-python build_agent/main.py --full_name <repository_full_name> --sha <sha> --root_path <root_path> --llm <llm_name>
+python build_agent/main.py --full_name <repository_full_name> --sha <sha> --root_path <root_path> --llm <llm_name> [--llm-provider auto|openai_compatible|anthropic]
 ```
 
 Where:
 - `repository_full_name`: The full name of the repository (e.g., user/repo)
 - `sha`: The commit SHA
 - `root_path`: The root path for the build process
-- `llm_name`: The name of the LLM model to use for configuration (default: gpt-4o-2024-05-13)
+- `llm_name`: The model id for your vendor (default: gpt-4o-2024-05-13)
+- `llm-provider` (optional): `auto` (default) infers API from model name (`claude` → Anthropic; otherwise OpenAI-compatible). Override with `openai_compatible` / `openai` or `anthropic`. Same as env `REPO2RUN_LLM_PROVIDER`.
 
 ## 🔍 Note
 💡 For example, you can use the following repository—which is relatively easy to set up—to verify whether there are any issues with running it. I have already confirmed that it can be successfully configured on several mainstream models, including GPT-4o and Claude 3.5.
 
 ```
 python build_agent/main.py --full_name "Benexl/FastAnime" --sha "677f4690fab4651163d0330786672cf1ba1351bf" --root_path . --llm "gpt-4o-2024-05-13"
+```
+
+DeepSeek (OpenAI-compatible) example:
+
+```bash
+export OPENAI_API_KEY="your-deepseek-key"
+export OPENAI_BASE_URL="https://api.deepseek.com"
+python build_agent/main.py --full_name "Benexl/FastAnime" --sha "677f4690fab4651163d0330786672cf1ba1351bf" --root_path . --llm "deepseek-chat" --llm-provider openai_compatible
 ```
 
 You can use this relatively easy-to-configure repository as a baseline to evaluate whether your chosen model can effectively handle this type of task. If the entire program starts successfully, the corresponding repository contents will be saved under `utils/repo`, and an `output` folder will be created with a structure like the following:
@@ -82,10 +108,13 @@ Please note: if the `output` folder does not contain trajectory files such as `t
 
 - `build_agent/` - Main package directory
   - `agents/` - Agent implementations for build configuration
-  - `utils/` - Utility functions and helper classes
-  - `docker/` - Docker-related configurations
+  - `utils/` - Utility functions and helper classes (including `llm.py`, `llm_providers.py`)
+  - `docker_templates/` - Sample Dockerfiles (renamed to avoid shadowing the `docker` PyPI package when running from `build_agent/`)
   - `main.py` - Main entry point
   - `multi_main.py` - Multi-process support
+- `docs/` - Extra documentation (LLM setup, PR workflow, upstream diff notes)
+- `tests/` - Optional repository unit tests (`pip install -r requirements-dev.txt && python -m pytest tests/`)
+- `.github/` - Pull request template
 
 ## 🔍 Features in Detail
 
@@ -106,9 +135,9 @@ Utilizes GPT models to assist in build configuration and problem resolution.
 ## 🔧 Contributing
 If you’d like to modify Repo2Run to better suit your needs, we’ve outlined some potential improvement plans. Due to time constraints, we may not be able to complete these changes immediately. However, if you implement any of them, we warmly welcome you to submit a PR and contribute to the project!
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create your fix branch (`git checkout -b fix/short-description`)
+3. Commit your changes (`git commit -m 'fix: describe the change'`)
+4. Push to the branch (`git push origin fix/short-description`)
 5. Open a Pull Request
 
 ## 🙋 Q&A
@@ -119,7 +148,7 @@ A: I recommend first running our suggested example to verify that your workflow 
 ### 2. The program runs, but the model keeps throwing errors like: “ERROR! Your reply does not contain valid block or final answer”
 A: This error originates from `agents/configuration.py`, which checks whether the LLM’s reply contains a command structure wrapped in triple backticks ```. In practice, we’ve clearly specified the required output format in the prompt; at least in our tests, GPT-4o and Claude-3.5-Sonnet did not exhibit this issue. If you encounter it, we suggest first inspecting the LLM’s raw output (e.g., `track.json` or `track.txt`).
 ### 3. Docker download speed inside the container is too slow, and how to set a proxy
-A: You can modify the `generate_dockerfile` function in the `Sandbox` class located at `utils/sandox.py`. It manages the generation of the initial Dockerfile. You can add statements like `ENV http_proxy=XXX` to configure the network proxy.
+A: You can modify the `generate_dockerfile` function in the `Sandbox` class located at `utils/sandbox.py`. It manages the generation of the initial Dockerfile. You can add statements like `ENV http_proxy=XXX` to configure the network proxy.
 
 ## 🔧 Proposed future improvements
 (we’ll work on these when time permits; PRs are very welcome)

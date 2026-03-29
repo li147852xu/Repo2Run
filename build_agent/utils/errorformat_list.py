@@ -13,7 +13,7 @@
 # limitations under the License. 
 
 from easylist import EasyList
-from parser.parse_requirements import parse_requirements
+from .parser.parse_requirements import parse_requirements
 
 class ErrorformatListItem:
     def __init__(self, error_string):

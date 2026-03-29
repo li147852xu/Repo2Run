@@ -90,6 +90,14 @@ def main():
     parser.add_argument('--sha', type=str, help='sha')
     parser.add_argument('--root_path', type=str, help='root path')
     parser.add_argument('--llm', type=str, default='gpt-4o-2024-05-13', help='base LLM name')
+    parser.add_argument(
+        '--llm-provider',
+        type=str,
+        default='auto',
+        choices=['auto', 'openai_compatible', 'openai', 'anthropic'],
+        help='LLM API backend: auto (infer from model name), openai_compatible (OpenAI/DeepSeek/Groq/…), anthropic (Claude). '
+        'Also configurable via env REPO2RUN_LLM_PROVIDER.',
+    )
 
     args = parser.parse_args()
 
@@ -135,7 +143,15 @@ def main():
 
     configuration_sandbox = Sandbox("python:3.10", full_name, root_path)
     configuration_sandbox.start_container()
-    configuration_agent = Configuration(configuration_sandbox, 'python:3.10', full_name, root_path, 100)
+    configuration_agent = Configuration(
+        configuration_sandbox,
+        'python:3.10',
+        full_name,
+        root_path,
+        llm=llm,
+        max_turn=100,
+        llm_provider=args.llm_provider,
+    )
     msg, outer_commands = configuration_agent.run('/tmp', trajectory, waiting_list, conflict_list)
     with open(f'{root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}/track.json', 'w') as w1:
         w1.write(json.dumps(msg, indent=4))

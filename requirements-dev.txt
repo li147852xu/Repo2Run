@@ -1,0 +1,3 @@
+# Optional dev dependencies (unit tests). Not required for running build_agent.
+-r requirements.txt
+pytest>=7.0.0

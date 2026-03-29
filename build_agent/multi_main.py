@@ -33,9 +33,13 @@ def run_command(command):
     full_name = command.split('python -u main.py "')[1].split('"')[0]
 
     vdb = subprocess.run("df -h | grep '/dev/vdb' | awk '{print $5}'", shell=True, capture_output=True, text=True)
-    if float(vdb.stdout.strip().split('%')[0]) > 90:
-        print('Warning! The disk /dev/vdb has occupied over 90% memories!')
-        sys.exit(1)
+    if vdb.stdout and vdb.stdout.strip():
+        try:
+            if float(vdb.stdout.strip().split('%')[0]) > 90:
+                print('Warning! The disk /dev/vdb has occupied over 90% memories!')
+                sys.exit(1)
+        except (ValueError, IndexError):
+            pass
     try:
         print(f'Begin: {command}')
         subprocess.run(command, shell=True)

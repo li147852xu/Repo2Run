@@ -85,6 +85,7 @@ db.sqlite3-journal
 # Project specific
 *.env
 output/
+**/utils/repo/
 logs/
 temp/
 .build_cache/

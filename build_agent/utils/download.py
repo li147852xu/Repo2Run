@@ -53,7 +53,7 @@ def download(session, waiting_list, conflict_list):
             # success, result = run_apt(pop_item.package_name, pop_item.version_constraints)
             command = f'python /home/tools/apt_download.py -p {pop_item.package_name}'
             if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
-                command += f' -v "{pop_item.package_name}"'
+                command += f' -v "{pop_item.version_constraints}"'
             success, result = session.execute_simple(command)
         else:
             print(f'Please check the tool: {pop_item.tool.lower()}, packege_name: {pop_item.package_name}, version_constraints: {pop_item.version_constraints}')

@@ -16,6 +16,7 @@ import os, sys, json
 import subprocess
 from agents.agent import Agent
 from utils.llm import get_llm_response
+from utils.llm_providers import resolve_llm_provider, uses_openai_style_conversation_roles
 from utils.agent_util import safe_cmd, extract_commands, append_trajectory, TIME_OUT_LABEL, extract_diffs, save_diff_description, DIFF_FENCE, BASH_FENCE, INIT_PROMPT, EDIT_PROMPT, HEAD, DIVIDER, UPDATED
 from utils.tools_config import Tools
 from utils.split_cmd import split_cmd_statements
@@ -69,9 +70,20 @@ Explanation: Clear all the items in the conflict list.''',
     return new_text
 
 class Configuration(Agent):
-    def __init__(self, sandbox, image_name, full_name, root_dir, llm="gpt-4o-2024-05-13", max_turn=70):
+    def __init__(
+        self,
+        sandbox,
+        image_name,
+        full_name,
+        root_dir,
+        llm="gpt-4o-2024-05-13",
+        max_turn=70,
+        llm_provider=None,
+    ):
         self.model = llm
         # self.model = "aws_claude35_sonnet"
+        self.llm_provider = resolve_llm_provider(llm, llm_provider)
+        self._openai_roles = uses_openai_style_conversation_roles(self.llm_provider)
         self.root_dir = root_dir
         self.max_turn = max_turn
         self.sandbox = sandbox
@@ -153,7 +165,7 @@ If you encounter import errors such as ModuleNotFoundError or ImportError, you c
 Please note that when manually using pip, apt-get, poetry, or other tools to download third-party libraries, try to use the `-q` (quiet) mode if available to reduce intermediate progress bar outputs. Additionally, we will help remove more obvious progress bar information to minimize interference with the analysis.
 If you need to install packages using pip, please consider adding them to the waiting list first, and then use the `download` command to proceed with the installation.
 In each round of the conversation, we will inform you of the commands that have been correctly executed and have changed the state of the current Docker container. Please reflect on each round's Observation in relation to the current state of the Docker container and decide the subsequent Action.
-If you need to run two or more commands, please strictly follow the order by enclosing each command in ONE {BASH_FENCE[0]} and {BASH_FENCE[1]} blocks connected by "&&" with ONE line! It is not recommended to use backslashes (\) for line continuation. If you need to execute commands that span multiple lines, it is advisable to write them into a .sh file and then run the executable file. For example, if you want to enter the /repo directory and execute `poetry install`, you should input:
+If you need to run two or more commands, please strictly follow the order by enclosing each command in ONE {BASH_FENCE[0]} and {BASH_FENCE[1]} blocks connected by "&&" with ONE line! It is not recommended to use backslashes (\\) for line continuation. If you need to execute commands that span multiple lines, it is advisable to write them into a .sh file and then run the executable file. For example, if you want to enter the /repo directory and execute `poetry install`, you should input:
 {BASH_FENCE[0]}
 cd /repo && poetry install
 {BASH_FENCE[1]}
@@ -233,13 +245,13 @@ VERY IMPORTANT TIPS:
         print(self.init_prompt)
         start_time0 = time.time()
         self.messages = []
-        if "gpt" in self.model:
+        if self._openai_roles:
             system_message = {"role": "system", "content": self.init_prompt}
             self.messages.append(system_message)
             user_message = {"role": "user", "content": f"[Project root Path]: /repo"}
             self.messages.append(user_message)
         else:
-            assert "claude" in self.model
+            # Anthropic-style: single initial user turn (no system role in API)
             claude_prompt = f"{self.init_prompt} \n[Project root Path]: /repo"
             user_message = {"role": "user", "content": claude_prompt}
             self.messages.append(user_message)
@@ -301,13 +313,15 @@ VERY IMPORTANT TIPS:
             GPT_start_time = time.time()
             current_messages = manage_token_usage(self.messages)
 
-            configuration_agent_list, usage = get_llm_response(self.model, current_messages)
-            # configuration_agent_list, usage = get_llm_response(self.model, self.messages)
+            configuration_agent_list, usage = get_llm_response(
+                self.model, current_messages, llm_provider=self.llm_provider
+            )
             GPT_end_time = time.time()
             GPT_elasped_time = GPT_end_time - GPT_start_time
             self.outer_commands.append({"GPT_time": GPT_elasped_time})
-            configuration_agent = configuration_agent_list[0]
-            cost_tokens += usage["total_tokens"]
+            configuration_agent = configuration_agent_list[0] if configuration_agent_list and configuration_agent_list[0] else ""
+            if usage:
+                cost_tokens += int(usage.get("total_tokens", 0))
 
             # 将模型回答加入记忆
             assistant_message = {"role": "assistant", "content": configuration_agent}
@@ -328,9 +342,14 @@ VERY IMPORTANT TIPS:
                     self.outer_commands.append({"command": commands[i], "returncode": -2, "time": -1})
                     start_time = time.time()
                     vdb = subprocess.run("df -h | grep '/dev/vdb' | awk '{print $5}'", shell=True, capture_output=True, text=True)
-                    if float(vdb.stdout.strip().split('%')[0]) > 90:
-                        print('Warning! The disk /dev/vdb has occupied over 90% memories!')
-                        sys.exit(3)
+                    if vdb.stdout and vdb.stdout.strip():
+                        try:
+                            usage_pct = float(vdb.stdout.strip().split('%')[0])
+                            if usage_pct > 90:
+                                print('Warning! The disk /dev/vdb has occupied over 90% memories!')
+                                sys.exit(3)
+                        except (ValueError, IndexError):
+                            pass
                     
                     # 切换python版本
                     if commands[i].strip().startswith('change_python_version'):
@@ -340,20 +359,27 @@ VERY IMPORTANT TIPS:
                             if isinstance(sandbox, str):
                                 print(sandbox)
                                 system_res += sandbox
-                            else:
-                                self.sandbox = sandbox
-                                self.sandbox_session = self.sandbox.get_session()
-                                res = f"You have successfully switched the docker container's Python version to {python_version}. If you want to revert to the previous environment, you can enter `change_python_version` followed by the previous python version."
-                                # 内部指令需要添加一个标志
-                                self.sandbox.commands.append({"command": f'change_python_version {python_version}', "returncode": 0, "time": -1})
-                                self.image_name = 'python:' + python_version
-                                print(res)
-                                system_res += res
+                                self.outer_commands[-1]["returncode"] = 1
+                                end_time = time.time()
+                                self.outer_commands[-1]["time"] = end_time - start_time
+                                continue
+                            self.sandbox = sandbox
+                            self.sandbox_session = self.sandbox.get_session()
+                            res = f"You have successfully switched the docker container's Python version to {python_version}. If you want to revert to the previous environment, you can enter `change_python_version` followed by the previous python version."
+                            # 内部指令需要添加一个标志
+                            self.sandbox.commands.append({"command": f'change_python_version {python_version}', "returncode": 0, "time": -1})
+                            self.image_name = 'python:' + python_version
+                            print(res)
+                            system_res += res
                         except Exception as e:
                             res = f"Error to change the docker container's Python version to {python_version}, the error messages are: {e}"
                             print(res)
                             self.outer_commands[-1]["returncode"] = 1
                             system_res += res
+                            end_time = time.time()
+                            elasped_time = end_time - start_time
+                            self.outer_commands[-1]["time"] = elasped_time
+                            continue
                         end_time = time.time()
                         elasped_time = end_time - start_time
                         self.outer_commands[-1]["time"] = elasped_time
@@ -379,6 +405,10 @@ VERY IMPORTANT TIPS:
                             print(res)
                             self.outer_commands[-1]["returncode"] = 1
                             system_res += res
+                            end_time = time.time()
+                            elasped_time = end_time - start_time
+                            self.outer_commands[-1]["time"] = elasped_time
+                            continue
                         end_time = time.time()
                         elasped_time = end_time - start_time
                         self.outer_commands[-1]["time"] = elasped_time
@@ -518,7 +548,9 @@ The edit format is as follows:
 {UPDATED}
 """
             else:
-                self.outer_commands[-1]["returncode"] = 2
+                self.outer_commands.append(
+                    {"error": "no_valid_bash_or_diff", "returncode": 2, "time": -1}
+                )
                 system_res += "ERROR! Your reply does not contain valid block or final answer."
             
             current_directory, return_code = self.sandbox_session.execute('$pwd$', waiting_list, conflict_list)
@@ -545,11 +577,13 @@ The edit format is as follows:
             appendix = re.sub(pattern1, replacement1, appendix)
             
             system_res += appendix
-            if "gpt" in self.model:
-                system_message = {"role": "system", "content": system_res}
-            else:
-                system_message = {"role": "user", "content": system_res}
-            self.messages.append(system_message)
+            # OpenAI-compatible APIs (including DeepSeek) expect strict user/assistant
+            # alternation after the first turn. Observations are environment feedback to
+            # the model, so they must be role "user", not a second "system" after
+            # "assistant". deepseek-reasoner rejects assistant followed by system with
+            # errors like "Invalid consecutive assistant message at message index 2".
+            feedback_message = {"role": "user", "content": system_res}
+            self.messages.append(feedback_message)
             with open(f'{self.root_dir}/output/{self.full_name}/outer_commands.json', 'w') as w1:
                 w1.write(json.dumps(self.outer_commands, indent=4))
             with open(f'{self.root_dir}/output/{self.full_name}/inner_commands.json', 'w') as w1:
